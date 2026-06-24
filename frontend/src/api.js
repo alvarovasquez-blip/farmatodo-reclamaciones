@@ -1,4 +1,4 @@
-const BASE = '/api';
+const BASE = 'https://farmatodo-backend.onrender.com/api';
 
 function getToken() {
   return localStorage.getItem('ft_token');
