@@ -1,4 +1,4 @@
-router.get('/stats', authMiddleware, requireRol('agente_sac'), async (req, res) => {
+const router = require('express').Router();router.get('/stats', authMiddleware, requireRol('agente_sac'), async (req, res) => {
   try {
     const result = await db.all(`
       SELECT estado, COUNT(*) as total FROM reclamaciones GROUP BY estado
