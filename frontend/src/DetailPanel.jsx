@@ -131,16 +131,14 @@ export default function DetailPanel({ reclamacionId, onClose, onUpdated, proveed
         {isAgente && (
           <div className="panel-section">
             <div className="panel-section-title">Cambiar estado</div>
-            {rec.estado !== 'proveedor' && (
-              <div className="estado-selector">
-                {ESTADOS.map(e => (
-                  <button key={e.k} className={`estado-btn ${rec.estado === e.k ? 'sel-' + e.k : ''}`}
-                    onClick={() => e.k !== rec.estado && e.k !== 'proveedor' && cambiarEstado(e.k)}>
-                    {e.label}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="estado-selector">
+              {ESTADOS.filter(e => e.k !== 'proveedor').map(e => (
+                <button key={e.k} className={`estado-btn ${rec.estado === e.k ? 'sel-' + e.k : ''}`}
+                  onClick={() => e.k !== rec.estado && cambiarEstado(e.k)}>
+                  {e.label}
+                </button>
+              ))}
+            </div>
             <div style={{ marginTop: 10 }}>
               <label style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 500, display: 'block', marginBottom: 6 }}>
                 Escalar a proveedor
@@ -163,14 +161,20 @@ export default function DetailPanel({ reclamacionId, onClose, onUpdated, proveed
           <div className="panel-section-title">Evidencias ({rec.evidencias?.length || 0})</div>
           <div className="ev-grid">
             {(rec.evidencias || []).map(e => (
-              <div key={e.id} className="ev-item" title={`${e.nombre_original} · ${formatSize(e.tamano)}`}>
-                <div className="ev-icon" style={{ background: isImage(e.tipo_mime) ? 'var(--blue-light)' : 'var(--red-light)' }}>
-                  {isImage(e.tipo_mime)
-                    ? <IconImg style={{ color: 'var(--blue)' }}/>
-                    : <IconFile style={{ color: 'var(--red)' }}/>}
-                </div>
+              <div key={e.id} className="ev-item" title={`${e.nombre_original} · ${formatSize(e.tamano)}`}
+                onClick={() => window.open(e.nombre_archivo, '_blank')}
+                style={{ cursor: 'pointer' }}>
+                {isImage(e.tipo_mime)
+                  ? <img src={e.nombre_archivo} alt={e.nombre_original}
+                      style={{ width: '100%', height: 70, objectFit: 'cover', borderRadius: 6, marginBottom: 4 }}
+                      onError={ev => ev.target.style.display='none'}/>
+                  : <div className="ev-icon" style={{ background: 'var(--primary-light)' }}>
+                      <IconFile/>
+                    </div>
+                }
                 <div className="ev-name">{e.nombre_original}</div>
                 <div className="ev-by">{e.usuario_nombre}</div>
+                <div style={{ fontSize: 10, color: 'var(--primary)', marginTop: 2 }}>↗ Ver / Descargar</div>
               </div>
             ))}
             <div className="ev-item ev-upload" onClick={() => fileRef.current?.click()} style={{ justifyContent: 'center' }}>
