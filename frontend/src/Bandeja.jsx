@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { api } from './api';
 import { useToast } from './ToastContext';
-import { StatusBadge, Avatar, IconSearch, IconPlus } from './components';
+import { StatusBadge, IconSearch } from './components';
 import NuevaReclamacion from './NuevaReclamacion';
 import DetailPanel from './DetailPanel';
 
@@ -13,17 +13,37 @@ const TABS = [
   { k: 'proveedor', label: 'Pend. proveedor' },
   { k: 'resuelto', label: 'Resueltos' },
 ];
-const MOTIVOS = ['Pedido incompleto', 'Retracto de compra', 'Pedido no llega', 'Calidad de producto', 'Producto equivocado', 'Otro'];
-
-const ESTADO_LABELS = {
-  abierto: 'Abierto', revision: 'En revisión', proveedor: 'Pendiente proveedor',
-  resuelto: 'Resuelto', cerrado: 'Cerrado'
-};
+const MOTIVOS = ['Pedido incompleto','Retracto de compra','Pedido no llega','Calidad de producto','Producto equivocado','Otro'];
+const ESTADO_LABELS = { abierto:'Abierto', revision:'En revisión', proveedor:'Pendiente proveedor', resuelto:'Resuelto', cerrado:'Cerrado' };
+const SLA_HORAS = 48;
 
 function IconDownload() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
-  </svg>;
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>;
+}
+
+function getSLA(caso) {
+  if (['resuelto','cerrado'].includes(caso.estado)) return null;
+  const created = new Date(caso.created_at);
+  if (isNaN(created)) return null;
+  const horasTranscurridas = (Date.now() - created.getTime()) / 3600000;
+  const horasRestantes = SLA_HORAS - horasTranscurridas;
+  if (horasRestantes < 0) return { estado: 'vencido', horas: Math.abs(horasRestantes), label: `Vencido hace ${Math.round(Math.abs(horasRestantes))}h` };
+  if (horasRestantes < 12) return { estado: 'riesgo', horas: horasRestantes, label: `Vence en ${Math.round(horasRestantes)}h` };
+  return { estado: 'ok', horas: horasRestantes, label: `${Math.round(horasRestantes)}h restantes` };
+}
+
+function SLABadge({ caso }) {
+  const sla = getSLA(caso);
+  if (!sla || sla.estado === 'ok') return null;
+  const estilos = {
+    vencido: { background: '#FFF0F2', color: '#B5122B', border: '1px solid #F5C0C8' },
+    riesgo:  { background: '#FAEEDA', color: '#BA7517', border: '1px solid #FAC775' },
+  };
+  return (
+    <span style={{ ...estilos[sla.estado], fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 20, whiteSpace: 'nowrap' }}>
+      ⏱ {sla.label}
+    </span>
+  );
 }
 
 export default function Bandeja() {
@@ -38,6 +58,7 @@ export default function Bandeja() {
   const [showNuevo, setShowNuevo] = useState(false);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [slaFilter, setSlaFilter] = useState('todos');
 
   useEffect(() => { loadAll(); }, [tab, motivo, q]);
   useEffect(() => { api.getUsuarios('proveedor').then(d => setProveedores(d.usuarios)).catch(()=>{}); }, []);
@@ -55,63 +76,45 @@ export default function Bandeja() {
     finally { setLoading(false); }
   }
 
-  function handleCreated(rec) {
-    setShowNuevo(false);
-    loadAll();
-    setSelectedId(rec.id);
-  }
+  function handleCreated(rec) { setShowNuevo(false); loadAll(); setSelectedId(rec.id); }
+  function handleUpdated(rec) { setCasos(prev => prev.map(c => c.id === rec.id ? { ...c, ...rec } : c)); loadAll(); }
 
-  function handleUpdated(rec) {
-    setCasos(prev => prev.map(c => c.id === rec.id ? { ...c, ...rec } : c));
-    loadAll();
-  }
+  const casosFiltrados = casos.filter(c => {
+    if (slaFilter === 'vencido') return getSLA(c)?.estado === 'vencido';
+    if (slaFilter === 'riesgo') return getSLA(c)?.estado === 'riesgo';
+    return true;
+  });
+
+  const vencidos = casos.filter(c => getSLA(c)?.estado === 'vencido').length;
+  const enRiesgo = casos.filter(c => getSLA(c)?.estado === 'riesgo').length;
 
   async function exportarExcel() {
     setExporting(true);
     try {
-      // Obtener todos los casos sin filtro para el reporte completo
       const todosData = await api.getReclamaciones({});
       const todos = todosData.reclamaciones;
-
       const wb = XLSX.utils.book_new();
 
-      // HOJA 1: Todas las reclamaciones
-      const hoja1 = todos.map(c => ({
-        'N° Reclamación': c.numero,
-        'N° Orden': c.orden,
-        'Titular': c.titular,
-        'Motivo': c.motivo,
-        'Estado': ESTADO_LABELS[c.estado] || c.estado,
-        'Medio de reembolso': c.medio_reembolso || 'No aplica',
-        'N° Guía': c.guia || 'Sin guía',
-        'Fecha solicitud': c.fecha_solicitud,
-        'Agente': c.agente_nombre || '',
-      }));
-      const ws1 = XLSX.utils.json_to_sheet(hoja1);
-      ws1['!cols'] = [
-        {wch:18},{wch:16},{wch:25},{wch:22},{wch:20},{wch:18},{wch:16},{wch:14},{wch:20}
-      ];
-      XLSX.utils.book_append_sheet(wb, ws1, 'Todas las reclamaciones');
-
-      // HOJA 2: Filtradas (las que se ven actualmente en pantalla)
-      if (casos.length !== todos.length) {
-        const hoja2 = casos.map(c => ({
+      const hoja1 = todos.map(c => {
+        const sla = getSLA(c);
+        return {
           'N° Reclamación': c.numero,
           'N° Orden': c.orden,
           'Titular': c.titular,
           'Motivo': c.motivo,
           'Estado': ESTADO_LABELS[c.estado] || c.estado,
+          'SLA': sla ? sla.label : 'Resuelto',
+          'SLA Vencido Histórico': c.sla_vencido ? 'Sí' : 'No',
           'Medio de reembolso': c.medio_reembolso || 'No aplica',
           'N° Guía': c.guia || 'Sin guía',
           'Fecha solicitud': c.fecha_solicitud,
           'Agente': c.agente_nombre || '',
-        }));
-        const ws2 = XLSX.utils.json_to_sheet(hoja2);
-        ws2['!cols'] = [{wch:18},{wch:16},{wch:25},{wch:22},{wch:20},{wch:18},{wch:16},{wch:14},{wch:20}];
-        XLSX.utils.book_append_sheet(wb, ws2, 'Filtradas');
-      }
+        };
+      });
+      const ws1 = XLSX.utils.json_to_sheet(hoja1);
+      ws1['!cols'] = [{wch:18},{wch:16},{wch:25},{wch:22},{wch:20},{wch:18},{wch:18},{wch:18},{wch:16},{wch:14},{wch:20}];
+      XLSX.utils.book_append_sheet(wb, ws1, 'Todas las reclamaciones');
 
-      // HOJA 3: Estadísticas
       const hoja3 = [
         { 'Métrica': 'Total reclamaciones', 'Valor': stats.total || 0 },
         { 'Métrica': 'Abiertas', 'Valor': stats.abierto || 0 },
@@ -119,14 +122,16 @@ export default function Bandeja() {
         { 'Métrica': 'Pendiente proveedor', 'Valor': stats.proveedor || 0 },
         { 'Métrica': 'Resueltas', 'Valor': stats.resuelto || 0 },
         { 'Métrica': 'Cerradas', 'Valor': stats.cerrado || 0 },
-        { 'Métrica': 'Tiempo promedio resolución (horas)', 'Valor': stats.tiempo_promedio_horas || 'N/A' },
+        { 'Métrica': 'Casos vencidos SLA (activos)', 'Valor': vencidos },
+        { 'Métrica': 'Casos en riesgo SLA', 'Valor': enRiesgo },
+        { 'Métrica': 'Casos vencidos SLA (histórico)', 'Valor': stats.sla_vencidos_historico || 0 },
+        { 'Métrica': 'SLA definido (horas)', 'Valor': SLA_HORAS },
         { 'Métrica': 'Fecha del reporte', 'Valor': new Date().toLocaleString('es-CO') },
       ];
       const ws3 = XLSX.utils.json_to_sheet(hoja3);
       ws3['!cols'] = [{wch:35},{wch:20}];
       XLSX.utils.book_append_sheet(wb, ws3, 'Estadísticas');
 
-      // HOJA 4: Detalle del caso seleccionado
       if (selectedId) {
         try {
           const detalle = await api.getReclamacion(selectedId);
@@ -136,28 +141,17 @@ export default function Bandeja() {
             { 'Campo': 'Titular', 'Valor': detalle.titular },
             { 'Campo': 'Motivo', 'Valor': detalle.motivo },
             { 'Campo': 'Estado', 'Valor': ESTADO_LABELS[detalle.estado] || detalle.estado },
+            { 'Campo': 'SLA Vencido', 'Valor': detalle.sla_vencido ? 'Sí' : 'No' },
             { 'Campo': 'Medio de reembolso', 'Valor': detalle.medio_reembolso || 'No aplica' },
             { 'Campo': 'N° Guía', 'Valor': detalle.guia || 'Sin guía' },
             { 'Campo': 'Fecha solicitud', 'Valor': detalle.fecha_solicitud },
             { 'Campo': 'Descripción', 'Valor': detalle.descripcion },
             { 'Campo': '', 'Valor': '' },
             { 'Campo': 'HISTORIAL', 'Valor': '' },
-            ...(detalle.historial || []).map(h => ({
-              'Campo': h.created_at,
-              'Valor': h.descripcion
-            })),
+            ...(detalle.historial || []).map(h => ({ 'Campo': h.created_at, 'Valor': h.descripcion })),
             { 'Campo': '', 'Valor': '' },
             { 'Campo': 'COMENTARIOS', 'Valor': '' },
-            ...(detalle.comentarios || []).map(c => ({
-              'Campo': `${c.usuario_nombre} (${c.created_at})`,
-              'Valor': c.texto
-            })),
-            { 'Campo': '', 'Valor': '' },
-            { 'Campo': 'EVIDENCIAS', 'Valor': '' },
-            ...(detalle.evidencias || []).map(e => ({
-              'Campo': e.nombre_original,
-              'Valor': e.nombre_archivo
-            })),
+            ...(detalle.comentarios || []).map(c => ({ 'Campo': `${c.usuario_nombre} (${c.created_at})`, 'Valor': c.texto })),
           ];
           const ws4 = XLSX.utils.json_to_sheet(hoja4);
           ws4['!cols'] = [{wch:30},{wch:60}];
@@ -165,7 +159,6 @@ export default function Bandeja() {
         } catch(e) {}
       }
 
-      // Descargar
       const fecha = new Date().toISOString().split('T')[0];
       XLSX.writeFile(wb, `farmatodo-reclamaciones-${fecha}.xlsx`);
       toast('Reporte descargado exitosamente');
@@ -181,7 +174,17 @@ export default function Bandeja() {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div className="topbar">
           <div style={{ fontSize: 15, fontWeight: 600 }}>Bandeja de casos</div>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+            {vencidos > 0 && (
+              <span style={{ background: '#FFF0F2', color: '#B5122B', border: '1px solid #F5C0C8', fontSize: 12, fontWeight: 600, padding: '4px 10px', borderRadius: 20 }}>
+                🔴 {vencidos} vencido{vencidos > 1 ? 's' : ''}
+              </span>
+            )}
+            {enRiesgo > 0 && (
+              <span style={{ background: '#FAEEDA', color: '#BA7517', border: '1px solid #FAC775', fontSize: 12, fontWeight: 600, padding: '4px 10px', borderRadius: 20 }}>
+                🟡 {enRiesgo} en riesgo
+              </span>
+            )}
             <button className="btn btn-secondary" onClick={exportarExcel} disabled={exporting}>
               <IconDownload/> {exporting ? 'Generando…' : 'Exportar Excel'}
             </button>
@@ -191,9 +194,10 @@ export default function Bandeja() {
             </button>
           </div>
         </div>
+
         <div className="content">
           {/* Stats */}
-          <div className="stats-row">
+          <div className="stats-row" style={{ gridTemplateColumns: 'repeat(6,1fr)' }}>
             {[
               { k: 'abierto', label: 'Abiertos', dot: '#378ADD' },
               { k: 'revision', label: 'En revisión', dot: '#EF9F27' },
@@ -205,10 +209,26 @@ export default function Bandeja() {
                 <div className="stat-label"><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: s.dot, marginRight: 4 }}/>{s.label}</div>
               </div>
             ))}
+            <div className="stat-card" style={{ borderColor: '#F5C0C8', background: '#FFF8F8' }}>
+              <div className="stat-num" style={{ color: '#B5122B' }}>{stats.sla_vencidos_historico ?? '—'}</div>
+              <div className="stat-label">🔴 Vencidos histórico</div>
+            </div>
             <div className="stat-card">
               <div className="stat-num">{stats.tiempo_promedio_horas != null ? stats.tiempo_promedio_horas + 'h' : '—'}</div>
               <div className="stat-label">Tiempo promedio</div>
             </div>
+          </div>
+
+          {/* SLA Filter */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            {[
+              { k: 'todos', label: 'Todos los casos' },
+              { k: 'vencido', label: `🔴 Vencidos (${vencidos})` },
+              { k: 'riesgo', label: `🟡 En riesgo (${enRiesgo})` },
+            ].map(f => (
+              <button key={f.k} className={`filter-chip ${slaFilter === f.k ? 'active' : ''}`}
+                onClick={() => setSlaFilter(f.k)}>{f.label}</button>
+            ))}
           </div>
 
           {/* Tabs */}
@@ -240,26 +260,38 @@ export default function Bandeja() {
                   <th>Titular</th>
                   <th>Motivo</th>
                   <th>Estado</th>
+                  <th>SLA</th>
                   <th>Reembolso</th>
                   <th>Fecha</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan="7" style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>Cargando…</td></tr>
-                ) : casos.length === 0 ? (
-                  <tr><td colSpan="7" style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>No hay casos que coincidan</td></tr>
-                ) : casos.map(c => (
-                  <tr key={c.id} className={selectedId === c.id ? 'selected' : ''} onClick={() => setSelectedId(c.id)}>
-                    <td className="td-order">{c.numero}</td>
-                    <td className="td-order" style={{ fontSize: 11 }}>{c.orden}</td>
-                    <td className="td-name">{c.titular}</td>
-                    <td><span className="motivo-chip">{c.motivo}</span></td>
-                    <td><StatusBadge estado={c.estado}/></td>
-                    <td style={{ fontSize: 12, color: 'var(--text3)' }}>{c.medio_reembolso || '—'}</td>
-                    <td style={{ color: 'var(--text3)' }}>{c.fecha_solicitud}</td>
-                  </tr>
-                ))}
+                  <tr><td colSpan="8" style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>Cargando…</td></tr>
+                ) : casosFiltrados.length === 0 ? (
+                  <tr><td colSpan="8" style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>No hay casos que coincidan</td></tr>
+                ) : casosFiltrados.map(c => {
+                  const sla = getSLA(c);
+                  const rowStyle = sla?.estado === 'vencido'
+                    ? { background: '#FFF8F8' }
+                    : sla?.estado === 'riesgo'
+                    ? { background: '#FFFDF0' }
+                    : {};
+                  return (
+                    <tr key={c.id} style={{ ...rowStyle, cursor: 'pointer' }}
+                      className={selectedId === c.id ? 'selected' : ''}
+                      onClick={() => setSelectedId(c.id)}>
+                      <td className="td-order">{c.numero}</td>
+                      <td className="td-order" style={{ fontSize: 11 }}>{c.orden}</td>
+                      <td className="td-name">{c.titular}</td>
+                      <td><span className="motivo-chip">{c.motivo}</span></td>
+                      <td><StatusBadge estado={c.estado}/></td>
+                      <td><SLABadge caso={c}/></td>
+                      <td style={{ fontSize: 12, color: 'var(--text3)' }}>{c.medio_reembolso || '—'}</td>
+                      <td style={{ color: 'var(--text3)' }}>{c.fecha_solicitud}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
