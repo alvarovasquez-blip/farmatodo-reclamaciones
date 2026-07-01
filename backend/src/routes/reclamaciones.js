@@ -49,6 +49,17 @@ router.get('/stats', authMiddleware, requireRol('agente_sac'), async (req, res) 
     const result = await db.all(`SELECT estado, COUNT(*) as total FROM reclamaciones GROUP BY estado`);
     const stats = { abierto:0, revision:0, proveedor:0, resuelto:0, cerrado:0, total:0 };
     result.forEach(r => { stats[r.estado] = parseInt(r.total); stats.total += parseInt(r.total); });
+
+    const vencidos = await db.get(`SELECT COUNT(*) as total FROM reclamaciones WHERE sla_vencido = TRUE`);
+    stats.sla_vencidos_historico = parseInt(vencidos?.total || 0);
+
+    const vencidosActivos = await db.get(`
+      SELECT COUNT(*) as total FROM reclamaciones
+      WHERE estado NOT IN ('resuelto','cerrado')
+      AND (EXTRACT(EPOCH FROM (NOW() - created_at::timestamp)) / 3600) > 48
+    `);
+    stats.sla_vencidos_activos = parseInt(vencidosActivos?.total || 0);
+
     stats.tiempo_promedio_horas = null;
     res.json(stats);
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -68,7 +79,7 @@ router.post('/', authMiddleware, requireRol('agente_sac'), async (req, res) => {
     const { orden, guia, titular, fecha_solicitud, motivo, descripcion, medio_reembolso } = req.body;
     if (!orden||!titular||!fecha_solicitud||!motivo||!descripcion) return res.status(400).json({ error: 'Faltan campos obligatorios' });
     const id = uuidv4(); const numero = generarNumero();
-    await db.run(`INSERT INTO reclamaciones (id,numero,orden,guia,titular,fecha_solicitud,motivo,descripcion,medio_reembolso,agente_id) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    await db.run(`INSERT INTO reclamaciones (id,numero,orden,guia,titular,fecha_solicitud,motivo,descripcion,medio_reembolso,agente_id,sla_vencido) VALUES (?,?,?,?,?,?,?,?,?,?,FALSE)`,
       [id,numero,orden,guia||null,titular,fecha_solicitud,motivo,descripcion,medio_reembolso||null,req.user.id]);
     await registrarHistorial(id, req.user.id, 'creacion', `Reclamación creada por ${req.user.nombre}`);
     await registrarNotificacion(id, 'cliente', 'estado_cambio', `Tu reclamación ${numero} ha sido registrada.`);
