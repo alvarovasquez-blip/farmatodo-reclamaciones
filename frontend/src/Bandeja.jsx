@@ -105,6 +105,7 @@ export default function Bandeja() {
           'Estado': ESTADO_LABELS[c.estado] || c.estado,
           'SLA': sla ? sla.label : 'Resuelto',
           'SLA Vencido Histórico': c.sla_vencido ? 'Sí' : 'No',
+          'Proveedor': c.proveedor_nombre_usr || '—',
           'Medio de reembolso': c.medio_reembolso || 'No aplica',
           'N° Guía': c.guia || 'Sin guía',
           'Fecha solicitud': c.fecha_solicitud,
@@ -112,7 +113,7 @@ export default function Bandeja() {
         };
       });
       const ws1 = XLSX.utils.json_to_sheet(hoja1);
-      ws1['!cols'] = [{wch:18},{wch:16},{wch:25},{wch:22},{wch:20},{wch:18},{wch:18},{wch:18},{wch:16},{wch:14},{wch:20}];
+      ws1['!cols'] = [{wch:18},{wch:16},{wch:25},{wch:22},{wch:20},{wch:18},{wch:18},{wch:20},{wch:18},{wch:16},{wch:14},{wch:20}];
       XLSX.utils.book_append_sheet(wb, ws1, 'Todas las reclamaciones');
 
       const hoja3 = [
@@ -261,15 +262,16 @@ export default function Bandeja() {
                   <th>Motivo</th>
                   <th>Estado</th>
                   <th>SLA</th>
+                  <th>Proveedor</th>
                   <th>Reembolso</th>
                   <th>Fecha</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan="8" style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>Cargando…</td></tr>
+                  <tr><td colSpan="9" style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>Cargando…</td></tr>
                 ) : casosFiltrados.length === 0 ? (
-                  <tr><td colSpan="8" style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>No hay casos que coincidan</td></tr>
+                  <tr><td colSpan="9" style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>No hay casos que coincidan</td></tr>
                 ) : casosFiltrados.map(c => {
                   const sla = getSLA(c);
                   const rowStyle = sla?.estado === 'vencido'
@@ -287,6 +289,7 @@ export default function Bandeja() {
                       <td><span className="motivo-chip">{c.motivo}</span></td>
                       <td><StatusBadge estado={c.estado}/></td>
                       <td><SLABadge caso={c}/></td>
+                      <td style={{ fontSize: 12, color: 'var(--text3)' }}>{c.proveedor_nombre_usr || '—'}</td>
                       <td style={{ fontSize: 12, color: 'var(--text3)' }}>{c.medio_reembolso || '—'}</td>
                       <td style={{ color: 'var(--text3)' }}>{c.fecha_solicitud}</td>
                     </tr>
