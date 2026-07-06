@@ -32,7 +32,15 @@ async function enriquecer(r) {
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const { estado, q, motivo } = req.query;
-    let sql = `SELECT r.*,u.nombre as agente_nombre FROM reclamaciones r JOIN usuarios u ON r.agente_id=u.id WHERE 1=1`;
+    let sql = `
+      SELECT r.*, u.nombre as agente_nombre,
+             p.nombre as proveedor_nombre_usr,
+             p.proveedor_nombre as proveedor_empresa
+      FROM reclamaciones r
+      JOIN usuarios u ON r.agente_id=u.id
+      LEFT JOIN usuarios p ON r.proveedor_id=p.id
+      WHERE 1=1
+    `;
     const params = [];
     if (req.user.rol === 'proveedor') { sql += ' AND r.proveedor_id=?'; params.push(req.user.id); }
     if (estado) { sql += ' AND r.estado=?'; params.push(estado); }
