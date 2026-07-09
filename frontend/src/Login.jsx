@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { api } from './api';
 import { useAuth } from './AuthContext';
+import ForgotPassword from './ForgotPassword';
+import ResetPassword from './ResetPassword';
 
 export default function Login() {
   const { login } = useAuth();
@@ -8,6 +10,10 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [view, setView] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('token') ? 'reset' : 'login';
+  });
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -16,12 +22,15 @@ export default function Login() {
     try {
       const data = await api.login(email, password);
       login(data.token, data.user);
-    } catch (err) {
+    } catch(err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
   }
+
+  if (view === 'forgot') return <ForgotPassword onBack={() => setView('login')}/>;
+  if (view === 'reset') return <ResetPassword onSuccess={() => setView('login')}/>;
 
   return (
     <div className="login-page">
@@ -41,21 +50,26 @@ export default function Login() {
         <form onSubmit={handleSubmit}>
           <div className="form-group">
             <label className="form-label">Correo electrónico</label>
-            <input className="form-control" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="correo@ejemplo.com" required/>
+            <input className="form-control" type="email" value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="correo@ejemplo.com" required/>
           </div>
           <div className="form-group">
             <label className="form-label">Contraseña</label>
-            <input className="form-control" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required/>
+            <input className="form-control" type="password" value={password}
+              onChange={e => setPassword(e.target.value)}
+              placeholder="••••••••" required/>
           </div>
-          <button className="btn btn-primary" type="submit" disabled={loading} style={{ width: '100%', justifyContent: 'center', padding: '10px' }}>
+          <button className="btn btn-primary" type="submit" disabled={loading}
+            style={{ width: '100%', justifyContent: 'center', padding: '10px' }}>
             {loading ? 'Ingresando…' : 'Ingresar'}
           </button>
         </form>
-        <div style={{ marginTop: 20, padding: 14, background: 'var(--surface2)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--text3)' }}>
-          <strong style={{ display: 'block', marginBottom: 6, color: 'var(--text2)' }}>Cuentas de prueba:</strong>
-          Agente SAC: magudelo@farmatodo.com / farmatodo123<br/>
-          Proveedor: bayer@proveedores.farmatodo.com / bayer123
-        </div>
+        <button className="btn btn-secondary"
+          style={{ width: '100%', justifyContent: 'center', marginTop: 10 }}
+          onClick={() => setView('forgot')}>
+          ¿Olvidaste tu contraseña?
+        </button>
       </div>
     </div>
   );
