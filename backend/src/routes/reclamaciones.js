@@ -68,6 +68,14 @@ router.get('/stats', authMiddleware, requireRol('agente_sac'), async (req, res) 
     `);
     stats.sla_vencidos_activos = parseInt(vencidosActivos?.total || 0);
 
+    const sinRespuesta = await db.get(`
+      SELECT COUNT(*) as total FROM reclamaciones
+      WHERE primer_respuesta_at IS NULL
+      AND estado NOT IN ('resuelto','cerrado')
+      AND (EXTRACT(EPOCH FROM (NOW() - created_at::timestamp)) / 60) > 1
+    `);
+    stats.sla_primer_respuesta_vencidos = parseInt(sinRespuesta?.total || 0);
+
     stats.tiempo_promedio_horas = null;
     res.json(stats);
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -87,7 +95,7 @@ router.post('/', authMiddleware, requireRol('agente_sac'), async (req, res) => {
     const { orden, guia, titular, fecha_solicitud, motivo, descripcion, medio_reembolso } = req.body;
     if (!orden||!titular||!fecha_solicitud||!motivo||!descripcion) return res.status(400).json({ error: 'Faltan campos obligatorios' });
     const id = uuidv4(); const numero = generarNumero();
-    await db.run(`INSERT INTO reclamaciones (id,numero,orden,guia,titular,fecha_solicitud,motivo,descripcion,medio_reembolso,agente_id,sla_vencido) VALUES (?,?,?,?,?,?,?,?,?,?,FALSE)`,
+    await db.run(`INSERT INTO reclamaciones (id,numero,orden,guia,titular,fecha_solicitud,motivo,descripcion,medio_reembolso,agente_id,sla_vencido,sla_primer_respuesta_vencido) VALUES (?,?,?,?,?,?,?,?,?,?,FALSE,FALSE)`,
       [id,numero,orden,guia||null,titular,fecha_solicitud,motivo,descripcion,medio_reembolso||null,req.user.id]);
     await registrarHistorial(id, req.user.id, 'creacion', `Reclamación creada por ${req.user.nombre}`);
     await registrarNotificacion(id, 'cliente', 'estado_cambio', `Tu reclamación ${numero} ha sido registrada.`);
@@ -120,6 +128,17 @@ router.post('/:id/comentarios', authMiddleware, async (req, res) => {
     if (req.user.rol === 'proveedor' && r.proveedor_id !== req.user.id) return res.status(403).json({ error: 'Sin acceso' });
     const id = uuidv4();
     await db.run('INSERT INTO comentarios (id,reclamacion_id,usuario_id,texto) VALUES (?,?,?,?)', [id,req.params.id,req.user.id,texto.trim()]);
+
+    // Registrar primer respuesta del agente SAC
+    if (req.user.rol === 'agente_sac' && !r.primer_respuesta_at) {
+      const ahora = new Date().toISOString();
+      const minutos = (Date.now() - new Date(r.created_at).getTime()) / 60000;
+      await db.run(`UPDATE reclamaciones SET primer_respuesta_at=?, sla_primer_respuesta_vencido=? WHERE id=?`,
+        [ahora, minutos > 1, req.params.id]);
+      await registrarHistorial(req.params.id, req.user.id, 'primer_respuesta',
+        `Primera respuesta del agente en ${Math.round(minutos)} minuto(s) — SLA ${minutos > 1 ? 'VENCIDO' : 'cumplido'}`);
+    }
+
     await registrarHistorial(req.params.id, req.user.id, 'comentario', `Comentario añadido por ${req.user.nombre}`);
     const comentario = await db.get(`SELECT c.*,u.nombre as usuario_nombre,u.rol as usuario_rol FROM comentarios c JOIN usuarios u ON c.usuario_id=u.id WHERE c.id=?`, [id]);
     res.status(201).json(comentario);
