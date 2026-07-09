@@ -45,4 +45,5 @@ export const api = {
 
   getUsuarios: (rol) => request('GET', `/usuarios${rol ? '?rol=' + rol : ''}`),
   crearUsuario: (data) => request('POST', '/usuarios', data),
+  actualizarUsuario: (id, data) => request('PATCH', `/usuarios/${id}`, data),
 };
