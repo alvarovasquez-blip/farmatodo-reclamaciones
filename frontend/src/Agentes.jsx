@@ -108,7 +108,8 @@ export default function Agentes() {
                     </td>
                     <td>
                       {a.activo && (
-                        <button className="btn btn-secondary btn-sm" style={{ color: 'var(--red)', borderColor: 'var(--red)' }}
+                        <button className="btn btn-secondary btn-sm"
+                          style={{ color: 'var(--primary)', borderColor: 'var(--primary)' }}
                           onClick={() => desactivar(a.id)}>
                           Desactivar
                         </button>
