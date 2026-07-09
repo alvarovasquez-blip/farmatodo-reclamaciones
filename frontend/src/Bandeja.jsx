@@ -16,6 +16,7 @@ const TABS = [
 const MOTIVOS = ['Pedido incompleto','Retracto de compra','Pedido no llega','Calidad de producto','Producto equivocado','Otro'];
 const ESTADO_LABELS = { abierto:'Abierto', revision:'En revisión', proveedor:'Pendiente proveedor', resuelto:'Resuelto', cerrado:'Cerrado' };
 const SLA_HORAS = 48;
+const SLA_PRIMER_RESPUESTA_MIN = 1;
 
 function IconDownload() {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>;
@@ -32,6 +33,17 @@ function getSLA(caso) {
   return { estado: 'ok', horas: horasRestantes, label: `${Math.round(horasRestantes)}h restantes` };
 }
 
+function getSLAPrimerRespuesta(caso) {
+  if (caso.primer_respuesta_at) return null;
+  if (['resuelto','cerrado'].includes(caso.estado)) return null;
+  const created = new Date(caso.created_at);
+  if (isNaN(created)) return null;
+  const minutosTranscurridos = (Date.now() - created.getTime()) / 60000;
+  const minutosRestantes = SLA_PRIMER_RESPUESTA_MIN - minutosTranscurridos;
+  if (minutosRestantes < 0) return { estado: 'vencido', label: `Sin respuesta hace ${Math.round(Math.abs(minutosRestantes))}min` };
+  return { estado: 'ok', label: `Responder en ${Math.round(minutosRestantes * 60)}seg` };
+}
+
 function SLABadge({ caso }) {
   const sla = getSLA(caso);
   if (!sla || sla.estado === 'ok') return null;
@@ -42,6 +54,16 @@ function SLABadge({ caso }) {
   return (
     <span style={{ ...estilos[sla.estado], fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 20, whiteSpace: 'nowrap' }}>
       ⏱ {sla.label}
+    </span>
+  );
+}
+
+function SLAPrimerRespuestaBadge({ caso }) {
+  const sla = getSLAPrimerRespuesta(caso);
+  if (!sla || sla.estado === 'ok') return null;
+  return (
+    <span style={{ background: '#FFF0F2', color: '#B5122B', border: '1px solid #F5C0C8', fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 20, whiteSpace: 'nowrap' }}>
+      💬 {sla.label}
     </span>
   );
 }
@@ -82,11 +104,13 @@ export default function Bandeja() {
   const casosFiltrados = casos.filter(c => {
     if (slaFilter === 'vencido') return getSLA(c)?.estado === 'vencido';
     if (slaFilter === 'riesgo') return getSLA(c)?.estado === 'riesgo';
+    if (slaFilter === 'sin_respuesta') return getSLAPrimerRespuesta(c)?.estado === 'vencido';
     return true;
   });
 
   const vencidos = casos.filter(c => getSLA(c)?.estado === 'vencido').length;
   const enRiesgo = casos.filter(c => getSLA(c)?.estado === 'riesgo').length;
+  const sinRespuesta = casos.filter(c => getSLAPrimerRespuesta(c)?.estado === 'vencido').length;
 
   async function exportarExcel() {
     setExporting(true);
@@ -97,14 +121,17 @@ export default function Bandeja() {
 
       const hoja1 = todos.map(c => {
         const sla = getSLA(c);
+        const sla1 = getSLAPrimerRespuesta(c);
         return {
           'N° Reclamación': c.numero,
           'N° Orden': c.orden,
           'Titular': c.titular,
           'Motivo': c.motivo,
           'Estado': ESTADO_LABELS[c.estado] || c.estado,
-          'SLA': sla ? sla.label : 'Resuelto',
+          'SLA Resolución': sla ? sla.label : 'Resuelto',
           'SLA Vencido Histórico': c.sla_vencido ? 'Sí' : 'No',
+          'SLA Primer Respuesta': c.primer_respuesta_at ? 'Respondido' : (sla1 ? sla1.label : '—'),
+          'SLA 1ra Resp. Vencido': c.sla_primer_respuesta_vencido ? 'Sí' : 'No',
           'Proveedor': c.proveedor_nombre_usr || '—',
           'Medio de reembolso': c.medio_reembolso || 'No aplica',
           'N° Guía': c.guia || 'Sin guía',
@@ -113,7 +140,7 @@ export default function Bandeja() {
         };
       });
       const ws1 = XLSX.utils.json_to_sheet(hoja1);
-      ws1['!cols'] = [{wch:18},{wch:16},{wch:25},{wch:22},{wch:20},{wch:18},{wch:18},{wch:20},{wch:18},{wch:16},{wch:14},{wch:20}];
+      ws1['!cols'] = [{wch:18},{wch:16},{wch:25},{wch:22},{wch:20},{wch:18},{wch:18},{wch:22},{wch:18},{wch:20},{wch:18},{wch:16},{wch:14},{wch:20}];
       XLSX.utils.book_append_sheet(wb, ws1, 'Todas las reclamaciones');
 
       const hoja3 = [
@@ -123,14 +150,16 @@ export default function Bandeja() {
         { 'Métrica': 'Pendiente proveedor', 'Valor': stats.proveedor || 0 },
         { 'Métrica': 'Resueltas', 'Valor': stats.resuelto || 0 },
         { 'Métrica': 'Cerradas', 'Valor': stats.cerrado || 0 },
-        { 'Métrica': 'Casos vencidos SLA (activos)', 'Valor': vencidos },
+        { 'Métrica': 'Casos vencidos SLA resolución (activos)', 'Valor': vencidos },
         { 'Métrica': 'Casos en riesgo SLA', 'Valor': enRiesgo },
-        { 'Métrica': 'Casos vencidos SLA (histórico)', 'Valor': stats.sla_vencidos_historico || 0 },
-        { 'Métrica': 'SLA definido (horas)', 'Valor': SLA_HORAS },
+        { 'Métrica': 'Casos vencidos SLA resolución (histórico)', 'Valor': stats.sla_vencidos_historico || 0 },
+        { 'Métrica': 'Casos sin primer respuesta vencidos', 'Valor': stats.sla_primer_respuesta_vencidos || 0 },
+        { 'Métrica': 'SLA resolución (horas)', 'Valor': SLA_HORAS },
+        { 'Métrica': 'SLA primer respuesta (minutos)', 'Valor': SLA_PRIMER_RESPUESTA_MIN },
         { 'Métrica': 'Fecha del reporte', 'Valor': new Date().toLocaleString('es-CO') },
       ];
       const ws3 = XLSX.utils.json_to_sheet(hoja3);
-      ws3['!cols'] = [{wch:35},{wch:20}];
+      ws3['!cols'] = [{wch:40},{wch:20}];
       XLSX.utils.book_append_sheet(wb, ws3, 'Estadísticas');
 
       if (selectedId) {
@@ -142,7 +171,9 @@ export default function Bandeja() {
             { 'Campo': 'Titular', 'Valor': detalle.titular },
             { 'Campo': 'Motivo', 'Valor': detalle.motivo },
             { 'Campo': 'Estado', 'Valor': ESTADO_LABELS[detalle.estado] || detalle.estado },
-            { 'Campo': 'SLA Vencido', 'Valor': detalle.sla_vencido ? 'Sí' : 'No' },
+            { 'Campo': 'SLA Resolución Vencido', 'Valor': detalle.sla_vencido ? 'Sí' : 'No' },
+            { 'Campo': 'Primera respuesta', 'Valor': detalle.primer_respuesta_at || 'Sin respuesta' },
+            { 'Campo': 'SLA 1ra Respuesta Vencido', 'Valor': detalle.sla_primer_respuesta_vencido ? 'Sí' : 'No' },
             { 'Campo': 'Medio de reembolso', 'Valor': detalle.medio_reembolso || 'No aplica' },
             { 'Campo': 'N° Guía', 'Valor': detalle.guia || 'Sin guía' },
             { 'Campo': 'Fecha solicitud', 'Valor': detalle.fecha_solicitud },
@@ -186,6 +217,11 @@ export default function Bandeja() {
                 🟡 {enRiesgo} en riesgo
               </span>
             )}
+            {sinRespuesta > 0 && (
+              <span style={{ background: '#FFF0F2', color: '#B5122B', border: '1px solid #F5C0C8', fontSize: 12, fontWeight: 600, padding: '4px 10px', borderRadius: 20 }}>
+                💬 {sinRespuesta} sin respuesta
+              </span>
+            )}
             <button className="btn btn-secondary" onClick={exportarExcel} disabled={exporting}>
               <IconDownload/> {exporting ? 'Generando…' : 'Exportar Excel'}
             </button>
@@ -197,7 +233,6 @@ export default function Bandeja() {
         </div>
 
         <div className="content">
-          {/* Stats */}
           <div className="stats-row" style={{ gridTemplateColumns: 'repeat(6,1fr)' }}>
             {[
               { k: 'abierto', label: 'Abiertos', dot: '#378ADD' },
@@ -214,32 +249,30 @@ export default function Bandeja() {
               <div className="stat-num" style={{ color: '#B5122B' }}>{stats.sla_vencidos_historico ?? '—'}</div>
               <div className="stat-label">🔴 Vencidos histórico</div>
             </div>
-            <div className="stat-card">
-              <div className="stat-num">{stats.tiempo_promedio_horas != null ? stats.tiempo_promedio_horas + 'h' : '—'}</div>
-              <div className="stat-label">Tiempo promedio</div>
+            <div className="stat-card" style={{ borderColor: '#F5C0C8', background: '#FFF8F8' }}>
+              <div className="stat-num" style={{ color: '#B5122B' }}>{stats.sla_primer_respuesta_vencidos ?? '—'}</div>
+              <div className="stat-label">💬 Sin 1ra respuesta</div>
             </div>
           </div>
 
-          {/* SLA Filter */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
             {[
               { k: 'todos', label: 'Todos los casos' },
               { k: 'vencido', label: `🔴 Vencidos (${vencidos})` },
               { k: 'riesgo', label: `🟡 En riesgo (${enRiesgo})` },
+              { k: 'sin_respuesta', label: `💬 Sin respuesta (${sinRespuesta})` },
             ].map(f => (
               <button key={f.k} className={`filter-chip ${slaFilter === f.k ? 'active' : ''}`}
                 onClick={() => setSlaFilter(f.k)}>{f.label}</button>
             ))}
           </div>
 
-          {/* Tabs */}
           <div className="tabs">
             {TABS.map(t => (
               <button key={t.k} className={`tab ${tab === t.k ? 'active' : ''}`} onClick={() => setTab(t.k)}>{t.label}</button>
             ))}
           </div>
 
-          {/* Filters */}
           <div className="filters">
             <button className={`filter-chip ${!motivo ? 'active' : ''}`} onClick={() => setMotivo('')}>Todos los motivos</button>
             {MOTIVOS.map(m => (
@@ -251,7 +284,6 @@ export default function Bandeja() {
             </div>
           </div>
 
-          {/* Table */}
           <div className="table-wrap">
             <table>
               <thead>
@@ -288,7 +320,12 @@ export default function Bandeja() {
                       <td className="td-name">{c.titular}</td>
                       <td><span className="motivo-chip">{c.motivo}</span></td>
                       <td><StatusBadge estado={c.estado}/></td>
-                      <td><SLABadge caso={c}/></td>
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          <SLABadge caso={c}/>
+                          <SLAPrimerRespuestaBadge caso={c}/>
+                        </div>
+                      </td>
                       <td style={{ fontSize: 12, color: 'var(--text3)' }}>{c.proveedor_nombre_usr || '—'}</td>
                       <td style={{ fontSize: 12, color: 'var(--text3)' }}>{c.medio_reembolso || '—'}</td>
                       <td style={{ color: 'var(--text3)' }}>{c.fecha_solicitud}</td>
