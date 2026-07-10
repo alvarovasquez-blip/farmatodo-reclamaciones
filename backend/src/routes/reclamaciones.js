@@ -64,7 +64,7 @@ router.get('/stats', authMiddleware, requireRol('agente_sac'), async (req, res) 
     const vencidosActivos = await db.get(`
       SELECT COUNT(*) as total FROM reclamaciones
       WHERE estado NOT IN ('resuelto','cerrado')
-      AND (EXTRACT(EPOCH FROM (NOW() - created_at::timestamp)) / 3600) > 48
+      AND (EXTRACT(EPOCH FROM (NOW() - created_at::timestamp)) / 3600) > 24
     `);
     stats.sla_vencidos_activos = parseInt(vencidosActivos?.total || 0);
 
@@ -72,7 +72,7 @@ router.get('/stats', authMiddleware, requireRol('agente_sac'), async (req, res) 
       SELECT COUNT(*) as total FROM reclamaciones
       WHERE primer_respuesta_at IS NULL
       AND estado NOT IN ('resuelto','cerrado')
-      AND (EXTRACT(EPOCH FROM (NOW() - created_at::timestamp)) / 60) > 1
+      AND (EXTRACT(EPOCH FROM (NOW() - created_at::timestamp)) / 60) > 60
     `);
     stats.sla_primer_respuesta_vencidos = parseInt(sinRespuesta?.total || 0);
 
@@ -129,14 +129,13 @@ router.post('/:id/comentarios', authMiddleware, async (req, res) => {
     const id = uuidv4();
     await db.run('INSERT INTO comentarios (id,reclamacion_id,usuario_id,texto) VALUES (?,?,?,?)', [id,req.params.id,req.user.id,texto.trim()]);
 
-    // Registrar primer respuesta del agente SAC
     if (req.user.rol === 'agente_sac' && !r.primer_respuesta_at) {
       const ahora = new Date().toISOString();
       const minutos = (Date.now() - new Date(r.created_at).getTime()) / 60000;
       await db.run(`UPDATE reclamaciones SET primer_respuesta_at=?, sla_primer_respuesta_vencido=? WHERE id=?`,
-        [ahora, minutos > 1, req.params.id]);
+        [ahora, minutos > 60, req.params.id]);
       await registrarHistorial(req.params.id, req.user.id, 'primer_respuesta',
-        `Primera respuesta del agente en ${Math.round(minutos)} minuto(s) — SLA ${minutos > 1 ? 'VENCIDO' : 'cumplido'}`);
+        `Primera respuesta del agente en ${Math.round(minutos)} minuto(s) — SLA ${minutos > 60 ? 'VENCIDO' : 'cumplido'}`);
     }
 
     await registrarHistorial(req.params.id, req.user.id, 'comentario', `Comentario añadido por ${req.user.nombre}`);
