@@ -15,19 +15,27 @@ app.get('/api/health', (req, res) => res.json({ ok: true, ts: new Date().toISOSt
 
 async function marcarSLAVencidos() {
   try {
-    const result = await db.run(`
+    const r1 = await db.run(`
       UPDATE reclamaciones
       SET sla_vencido = TRUE,
           sla_vencido_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
       WHERE sla_vencido = FALSE
       AND estado NOT IN ('resuelto','cerrado')
-      AND (EXTRACT(EPOCH FROM (NOW() - created_at::timestamp)) / 3600) > 48
+      AND (EXTRACT(EPOCH FROM (NOW() - created_at::timestamp)) / 3600) > 24
     `);
-    if (result.rowCount > 0) {
-      console.log(`⏱ SLA: ${result.rowCount} caso(s) marcados como vencidos`);
-    }
+    if (r1.rowCount > 0) console.log(`⏱ SLA resolución: ${r1.rowCount} caso(s) vencidos`);
+
+    const r2 = await db.run(`
+      UPDATE reclamaciones
+      SET sla_primer_respuesta_vencido = TRUE
+      WHERE sla_primer_respuesta_vencido = FALSE
+      AND primer_respuesta_at IS NULL
+      AND estado NOT IN ('resuelto','cerrado')
+      AND (EXTRACT(EPOCH FROM (NOW() - created_at::timestamp)) / 60) > 60
+    `);
+    if (r2.rowCount > 0) console.log(`⏱ SLA primer respuesta: ${r2.rowCount} caso(s) vencidos`);
   } catch(e) {
-    console.error('Error marcando SLA vencidos:', e.message);
+    console.error('Error marcando SLA:', e.message);
   }
 }
 
@@ -49,7 +57,6 @@ async function start() {
     res.status(500).json({ error: 'Error interno del servidor' });
   });
 
-  // Ejecutar inmediatamente al arrancar y luego cada hora
   await marcarSLAVencidos();
   setInterval(marcarSLAVencidos, 60 * 60 * 1000);
 
