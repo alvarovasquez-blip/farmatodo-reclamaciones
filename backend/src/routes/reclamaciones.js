@@ -4,8 +4,8 @@ const { db } = require('../db');
 const { authMiddleware, requireRol } = require('../middleware/auth');
 const path = require('path');
 
-const ESTADOS = ['abierto','revision','proveedor','resuelto','cerrado'];
-const ESTADO_LABELS = {abierto:'Abierto',revision:'En revisión',proveedor:'Pendiente proveedor',resuelto:'Resuelto',cerrado:'Cerrado'};
+const ESTADOS = ['abierto','revision','proveedor','cerrado'];
+const ESTADO_LABELS = {abierto:'Abierto',revision:'En revisión',proveedor:'Pendiente proveedor',cerrado:'Cerrado'};
 
 function generarNumero() {
   return `REC-${new Date().getFullYear()}-${String(Math.floor(Math.random()*99999)).padStart(5,'0')}`;
@@ -55,7 +55,7 @@ router.get('/', authMiddleware, async (req, res) => {
 router.get('/stats', authMiddleware, requireRol('agente_sac'), async (req, res) => {
   try {
     const result = await db.all(`SELECT estado, COUNT(*) as total FROM reclamaciones GROUP BY estado`);
-    const stats = { abierto:0, revision:0, proveedor:0, resuelto:0, cerrado:0, total:0 };
+    const stats = { abierto:0, revision:0, proveedor:0, cerrado:0, total:0 };
     result.forEach(r => { stats[r.estado] = parseInt(r.total); stats.total += parseInt(r.total); });
 
     const vencidos = await db.get(`SELECT COUNT(*) as total FROM reclamaciones WHERE sla_vencido = TRUE`);
@@ -63,7 +63,7 @@ router.get('/stats', authMiddleware, requireRol('agente_sac'), async (req, res) 
 
     const vencidosActivos = await db.get(`
       SELECT COUNT(*) as total FROM reclamaciones
-      WHERE estado NOT IN ('resuelto','cerrado')
+      WHERE estado NOT IN ('cerrado')
       AND (EXTRACT(EPOCH FROM (NOW() - created_at::timestamp)) / 3600) > 24
     `);
     stats.sla_vencidos_activos = parseInt(vencidosActivos?.total || 0);
@@ -71,7 +71,7 @@ router.get('/stats', authMiddleware, requireRol('agente_sac'), async (req, res) 
     const sinRespuesta = await db.get(`
       SELECT COUNT(*) as total FROM reclamaciones
       WHERE primer_respuesta_at IS NULL
-      AND estado NOT IN ('resuelto','cerrado')
+      AND estado NOT IN ('cerrado')
       AND (EXTRACT(EPOCH FROM (NOW() - created_at::timestamp)) / 60) > 60
     `);
     stats.sla_primer_respuesta_vencidos = parseInt(sinRespuesta?.total || 0);
@@ -122,7 +122,7 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
         EXTRACT(EPOCH FROM (r.updated_at::timestamp - r.created_at::timestamp)) / 3600
       ) as promedio_horas
       FROM reclamaciones r
-      ${whereBase} AND r.estado IN ('resuelto','cerrado')
+      ${whereBase} AND r.estado IN ('cerrado')
     `, params);
 
     const porEstado = await db.all(`
@@ -143,7 +143,7 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
         p.id as proveedor_id,
         p.proveedor_nombre as nombre,
         COUNT(r.id) as total_casos,
-        COUNT(CASE WHEN r.estado IN ('resuelto','cerrado') THEN 1 END) as casos_resueltos,
+        COUNT(CASE WHEN r.estado IN ('cerrado') THEN 1 END) as casos_resueltos,
         COUNT(CASE WHEN r.sla_vencido = TRUE THEN 1 END) as sla_vencidos,
         COUNT(CASE WHEN r.sla_primer_respuesta_vencido = TRUE THEN 1 END) as sla_resp_vencidos,
         ROUND(AVG(
@@ -152,7 +152,7 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
           END
         )::numeric, 1) as avg_primer_respuesta_min,
         ROUND(AVG(
-          CASE WHEN r.estado IN ('resuelto','cerrado')
+          CASE WHEN r.estado IN ('cerrado')
           THEN EXTRACT(EPOCH FROM (r.updated_at::timestamp - r.created_at::timestamp)) / 3600
           END
         )::numeric, 1) as avg_cierre_horas,
@@ -186,7 +186,7 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
         u.id as agente_id,
         u.nombre as nombre,
         COUNT(r.id) as total_casos,
-        COUNT(CASE WHEN r.estado IN ('resuelto','cerrado') THEN 1 END) as casos_resueltos,
+        COUNT(CASE WHEN r.estado IN ('cerrado') THEN 1 END) as casos_resueltos,
         COUNT(CASE WHEN r.sla_vencido = TRUE THEN 1 END) as sla_vencidos,
         ROUND(AVG(
           CASE WHEN r.primer_respuesta_at IS NOT NULL
@@ -194,7 +194,7 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
           END
         )::numeric, 1) as avg_primer_respuesta_min,
         ROUND(AVG(
-          CASE WHEN r.estado IN ('resuelto','cerrado')
+          CASE WHEN r.estado IN ('cerrado')
           THEN EXTRACT(EPOCH FROM (r.updated_at::timestamp - r.created_at::timestamp)) / 3600
           END
         )::numeric, 1) as avg_cierre_horas
