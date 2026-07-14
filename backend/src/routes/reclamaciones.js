@@ -83,6 +83,10 @@ router.get('/stats', authMiddleware, requireRol('agente_sac'), async (req, res) 
 
 router.get('/dashboard', authMiddleware, async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+
     const { fecha_inicio, fecha_fin, proveedor_id } = req.query;
 
     let whereBase = `WHERE 1=1`;
