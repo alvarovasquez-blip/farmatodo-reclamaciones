@@ -81,6 +81,118 @@ router.get('/stats', authMiddleware, requireRol('agente_sac'), async (req, res) 
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+router.get('/dashboard', authMiddleware, async (req, res) => {
+  try {
+    const { fecha_inicio, fecha_fin, proveedor_id } = req.query;
+
+    let whereBase = `WHERE 1=1`;
+    const params = [];
+
+    if (fecha_inicio) { whereBase += ` AND r.created_at >= ?`; params.push(fecha_inicio); }
+    if (fecha_fin) { whereBase += ` AND r.created_at <= ?`; params.push(fecha_fin + ' 23:59:59'); }
+    if (proveedor_id) { whereBase += ` AND r.proveedor_id = ?`; params.push(proveedor_id); }
+
+    const total = await db.get(`SELECT COUNT(*) as total FROM reclamaciones r ${whereBase}`, params);
+
+    const slaVencidos = await db.get(`
+      SELECT COUNT(*) as total FROM reclamaciones r
+      ${whereBase} AND r.sla_vencido = TRUE
+    `, params);
+
+    const slaPrimerRespVencidos = await db.get(`
+      SELECT COUNT(*) as total FROM reclamaciones r
+      ${whereBase} AND r.sla_primer_respuesta_vencido = TRUE
+    `, params);
+
+    const tiempoPrimerResp = await db.get(`
+      SELECT AVG(
+        EXTRACT(EPOCH FROM (r.primer_respuesta_at::timestamp - r.created_at::timestamp)) / 60
+      ) as promedio_minutos
+      FROM reclamaciones r
+      ${whereBase} AND r.primer_respuesta_at IS NOT NULL
+    `, params);
+
+    const tiempoCierre = await db.get(`
+      SELECT AVG(
+        EXTRACT(EPOCH FROM (r.updated_at::timestamp - r.created_at::timestamp)) / 3600
+      ) as promedio_horas
+      FROM reclamaciones r
+      ${whereBase} AND r.estado IN ('resuelto','cerrado')
+    `, params);
+
+    const porEstado = await db.all(`
+      SELECT r.estado, COUNT(*) as total
+      FROM reclamaciones r ${whereBase}
+      GROUP BY r.estado
+    `, params);
+
+    const porMotivo = await db.all(`
+      SELECT r.motivo, COUNT(*) as total
+      FROM reclamaciones r ${whereBase}
+      GROUP BY r.motivo
+      ORDER BY total DESC
+    `, params);
+
+    const porProveedor = await db.all(`
+      SELECT
+        p.id as proveedor_id,
+        p.proveedor_nombre as nombre,
+        COUNT(r.id) as total_casos,
+        COUNT(CASE WHEN r.estado IN ('resuelto','cerrado') THEN 1 END) as casos_resueltos,
+        COUNT(CASE WHEN r.sla_vencido = TRUE THEN 1 END) as sla_vencidos,
+        COUNT(CASE WHEN r.sla_primer_respuesta_vencido = TRUE THEN 1 END) as sla_resp_vencidos,
+        ROUND(AVG(
+          CASE WHEN r.primer_respuesta_at IS NOT NULL
+          THEN EXTRACT(EPOCH FROM (r.primer_respuesta_at::timestamp - r.created_at::timestamp)) / 60
+          END
+        )::numeric, 1) as avg_primer_respuesta_min,
+        ROUND(AVG(
+          CASE WHEN r.estado IN ('resuelto','cerrado')
+          THEN EXTRACT(EPOCH FROM (r.updated_at::timestamp - r.created_at::timestamp)) / 3600
+          END
+        )::numeric, 1) as avg_cierre_horas,
+        ROUND(
+          COUNT(CASE WHEN r.sla_vencido = TRUE THEN 1 END)::numeric /
+          NULLIF(COUNT(r.id), 0) * 100, 1
+        ) as pct_sla_vencido
+      FROM usuarios p
+      LEFT JOIN reclamaciones r ON r.proveedor_id = p.id
+        ${fecha_inicio ? `AND r.created_at >= '${fecha_inicio}'` : ''}
+        ${fecha_fin ? `AND r.created_at <= '${fecha_fin} 23:59:59'` : ''}
+      WHERE p.rol = 'proveedor' AND p.activo = 1
+      GROUP BY p.id, p.proveedor_nombre
+      ORDER BY total_casos DESC
+    `);
+
+    const tendencia = await db.all(`
+      SELECT
+        to_char(created_at::timestamp, 'YYYY-MM') as mes,
+        COUNT(*) as total,
+        COUNT(CASE WHEN sla_vencido = TRUE THEN 1 END) as vencidos
+      FROM reclamaciones r ${whereBase}
+      GROUP BY mes
+      ORDER BY mes ASC
+      LIMIT 6
+    `, params);
+
+    res.json({
+      kpis: {
+        total: parseInt(total?.total || 0),
+        sla_vencidos: parseInt(slaVencidos?.total || 0),
+        sla_primer_resp_vencidos: parseInt(slaPrimerRespVencidos?.total || 0),
+        pct_sla_vencido: total?.total > 0 ? Math.round(slaVencidos?.total / total?.total * 100) : 0,
+        pct_primer_resp_vencido: total?.total > 0 ? Math.round(slaPrimerRespVencidos?.total / total?.total * 100) : 0,
+        avg_primer_respuesta_min: tiempoPrimerResp?.promedio_minutos ? Math.round(parseFloat(tiempoPrimerResp.promedio_minutos) * 10) / 10 : null,
+        avg_cierre_horas: tiempoCierre?.promedio_horas ? Math.round(parseFloat(tiempoCierre.promedio_horas) * 10) / 10 : null,
+      },
+      por_estado: porEstado,
+      por_motivo: porMotivo,
+      por_proveedor: porProveedor,
+      tendencia
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const r = await db.get(`SELECT r.*,u.nombre as agente_nombre FROM reclamaciones r JOIN usuarios u ON r.agente_id=u.id WHERE r.id=?`, [req.params.id]);
