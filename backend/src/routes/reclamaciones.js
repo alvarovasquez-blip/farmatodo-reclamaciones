@@ -87,7 +87,7 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
     res.set('Pragma', 'no-cache');
     res.set('Expires', '0');
 
-    const { fecha_inicio, fecha_fin, proveedor_id } = req.query;
+    const { fecha_inicio, fecha_fin, proveedor_id, agente_id } = req.query;
 
     let whereBase = `WHERE 1=1`;
     const params = [];
@@ -95,6 +95,7 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
     if (fecha_inicio) { whereBase += ` AND r.created_at >= ?`; params.push(fecha_inicio); }
     if (fecha_fin) { whereBase += ` AND r.created_at <= ?`; params.push(fecha_fin + ' 23:59:59'); }
     if (proveedor_id) { whereBase += ` AND r.proveedor_id = ?`; params.push(proveedor_id); }
+    if (agente_id) { whereBase += ` AND r.agente_id = ?`; params.push(agente_id); }
 
     const total = await db.get(`SELECT COUNT(*) as total FROM reclamaciones r ${whereBase}`, params);
 
@@ -163,6 +164,7 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
       LEFT JOIN reclamaciones r ON r.proveedor_id = p.id
         ${fecha_inicio ? `AND r.created_at >= '${fecha_inicio}'` : ''}
         ${fecha_fin ? `AND r.created_at <= '${fecha_fin} 23:59:59'` : ''}
+        ${agente_id ? `AND r.agente_id = '${agente_id}'` : ''}
       WHERE p.rol = 'proveedor' AND p.activo = 1
       GROUP BY p.id, p.proveedor_nombre
       ORDER BY total_casos DESC
@@ -179,6 +181,33 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
       LIMIT 6
     `, params);
 
+    const porAgente = await db.all(`
+      SELECT
+        u.id as agente_id,
+        u.nombre as nombre,
+        COUNT(r.id) as total_casos,
+        COUNT(CASE WHEN r.estado IN ('resuelto','cerrado') THEN 1 END) as casos_resueltos,
+        COUNT(CASE WHEN r.sla_vencido = TRUE THEN 1 END) as sla_vencidos,
+        ROUND(AVG(
+          CASE WHEN r.primer_respuesta_at IS NOT NULL
+          THEN EXTRACT(EPOCH FROM (r.primer_respuesta_at::timestamp - r.created_at::timestamp)) / 60
+          END
+        )::numeric, 1) as avg_primer_respuesta_min,
+        ROUND(AVG(
+          CASE WHEN r.estado IN ('resuelto','cerrado')
+          THEN EXTRACT(EPOCH FROM (r.updated_at::timestamp - r.created_at::timestamp)) / 3600
+          END
+        )::numeric, 1) as avg_cierre_horas
+      FROM usuarios u
+      LEFT JOIN reclamaciones r ON r.agente_id = u.id
+        ${fecha_inicio ? `AND r.created_at >= '${fecha_inicio}'` : ''}
+        ${fecha_fin ? `AND r.created_at <= '${fecha_fin} 23:59:59'` : ''}
+        ${proveedor_id ? `AND r.proveedor_id = '${proveedor_id}'` : ''}
+      WHERE u.rol = 'agente_sac' AND u.activo = 1
+      GROUP BY u.id, u.nombre
+      ORDER BY total_casos DESC
+    `);
+
     res.json({
       kpis: {
         total: parseInt(total?.total || 0),
@@ -192,6 +221,7 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
       por_estado: porEstado,
       por_motivo: porMotivo,
       por_proveedor: porProveedor,
+      por_agente: porAgente,
       tendencia
     });
   } catch(e) { res.status(500).json({ error: e.message }); }
